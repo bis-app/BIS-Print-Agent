@@ -1,0 +1,25 @@
+[Unit]
+Description=BIS Druck-Agent (holt Druckauftraege vom BIS-Server und sendet ZPL an lokale Zebra-Drucker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bis-agent
+Group=bis-agent
+WorkingDirectory=/opt/bis-print-agent
+EnvironmentFile=/opt/bis-print-agent/.env
+ExecStart=/usr/bin/python3 /opt/bis-print-agent/print_agent.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening (optional, aber empfohlen)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
