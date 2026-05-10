@@ -79,7 +79,7 @@ if not BIS_BASE_URL or not BIS_AGENT_TOKEN:
 
 
 def _build_logger() -> logging.Logger:
-    log = logging.getLogger('bis-print-agent')
+    log = logging.getLogger('bis.print_agent')
     log.setLevel(logging.INFO)
     log.handlers.clear()
     fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
