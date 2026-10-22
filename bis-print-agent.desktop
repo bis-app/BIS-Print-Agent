@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=BIS Druck-Agent
+Comment=Statusfenster fuer den BIS Druck-Agent
+Exec=env BIS_FULLSCREEN=1 /opt/bis-print-agent/venv/bin/python /opt/bis-print-agent/print_agent.py
+Path=/opt/bis-print-agent
+Terminal=false
+Categories=Utility;
+X-GNOME-Autostart-enabled=true

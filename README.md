@@ -10,6 +10,11 @@ Druckauftraege per Long-/Short-Poll vom Server ab, sendet das mitgelieferte
 ZPL via TCP/9100 an den lokalen Drucker und meldet das Ergebnis zurueck.
 Damit ist weder ein VPN noch ein Inbound-Port noetig.
 
+Derselbe Client laeuft als Fenster (320x240, auf dem Raspberry Pi im Vollbild)
+oder ohne Fenster als Dienst. Das Fenster zeigt den Status und eine
+Einstellungsseite fuer BIS-Zugang und statische Netzwerkdaten. Texte werden
+mit einer USB-Tastatur eingegeben, es gibt keine Bildschirmtastatur.
+
 > Direkt-Druck (Server -> Drucker per TCP/9100) bleibt **parallel** moeglich.
 > Pro Drucker entscheidet die Spalte `zebra_printers.agent_id`, wie gedruckt
 > wird (`NULL` = direkt, sonst ueber den zugewiesenen Agent).
@@ -74,20 +79,27 @@ python3 -m venv venv
 . venv/bin/activate
 pip install -r /pfad/zu/print_agent_client/requirements.txt
 cp /pfad/zu/print_agent_client/print_agent.py .
+cp /pfad/zu/print_agent_client/agent_*.py .
 cp /pfad/zu/print_agent_client/.env.example .env
 # .env editieren und BIS_BASE_URL + BIS_AGENT_TOKEN setzen
 nano .env
 ```
 
+`agent_*.py` muss neben `print_agent.py` liegen. Auf dem Raspberry Pi zusaetzlich
+`sudo apt install python3-tk`. Tkinter gehoert nicht in die requirements, es
+kommt aus der Python-Installation.
+
 ### Erststart (manuell pruefen)
 
 ```bash
 . venv/bin/activate
-python print_agent.py
+python print_agent.py            # Fenster
+python print_agent.py --service  # ohne Fenster, Log auf der Konsole
 ```
 
-Erwartete Ausgabe: `BIS Druck-Agent gestartet. Server=...` Im Admin-UI
-erscheint die Spalte "Letzter Heartbeat" mit aktuellem Zeitstempel.
+Mit Zugangdaten erscheint im Admin-UI die Spalte "Letzter Heartbeat".
+Ohne `BIS_BASE_URL` oder Token bleibt das Fenster offen und zeigt die
+Einstellungen. `--service` beendet sich in dem Fall sofort.
 
 ## 4. Als Dienst dauerhaft starten
 
@@ -102,6 +114,8 @@ sudo systemctl enable --now bis-print-agent
 sudo journalctl -u bis-print-agent -f
 ```
 
+Der Unit startet `print_agent.py --service` und oeffnet kein Fenster.
+
 > Falls eine venv genutzt wird, in der `.service`-Datei `ExecStart` auf
 > `/opt/bis-print-agent/venv/bin/python` umstellen.
 
@@ -110,7 +124,7 @@ sudo journalctl -u bis-print-agent -f
 [NSSM (Non-Sucking Service Manager)](https://nssm.cc/) installieren, dann:
 
 ```powershell
-nssm install BIS-Print-Agent "C:\Python311\python.exe" "C:\bis-print-agent\print_agent.py"
+nssm install BIS-Print-Agent "C:\Python311\python.exe" "C:\bis-print-agent\print_agent.py" "--service"
 nssm set BIS-Print-Agent AppDirectory "C:\bis-print-agent"
 nssm set BIS-Print-Agent AppStdout "C:\bis-print-agent\agent.log"
 nssm set BIS-Print-Agent AppStderr "C:\bis-print-agent\agent.log"
@@ -119,7 +133,47 @@ nssm start BIS-Print-Agent
 ```
 
 Alternativ kann eine `.env`-Datei neben `print_agent.py` liegen; sie wird
-beim Start automatisch geladen.
+beim Start automatisch geladen. Der Dienst aendert keine Netzwerkadapter
+und braucht keine Administratorrechte.
+
+Dienst und Fenster schliessen sich aus. Laeuft der Dienst, zeigt die App den
+Hinweis, ihn zu beenden, und pollt nicht ein zweites Mal. Die Sperrdatei liegt
+unter Windows neben dem Skript (`print_agent.lock`), unter Linux in
+`/tmp/bis-print-agent.lock`.
+
+### Windows (Fenster)
+
+```powershell
+cd C:\bis-print-agent
+python print_agent.py
+# ohne Konsole:
+pythonw print_agent.py
+```
+
+Das Fenster ist 320x240. Unter Einstellungen liegen Server-URL, Token,
+LAN/WLAN, IP-Adresse, Subnetzmaske und Gateway. Bei WLAN oeffnet "Netze"
+die SSID-Liste und das Passwortfeld. Speichern schreibt den BIS-Zugang in
+die `.env` und setzt die statische Adresse am Adapter. Dafuer muss die App
+als Administrator gestartet werden. Ohne diese Rechte bleibt der Druck
+nutzbar, das Netzwerk wird nicht geaendert.
+
+### Raspberry Pi (2,4"-Display)
+
+Das Display muss als normaler Bildschirm erscheinen (Tkinter mit Buttons),
+nicht als rohes SPI. In der `.env` `BIS_FULLSCREEN=1` setzen. Autostart in
+der bestehenden Desktop-Sitzung:
+
+```bash
+mkdir -p ~/.config/autostart
+cp /pfad/zu/print_agent_client/bis-print-agent.desktop ~/.config/autostart/
+# Exec-Pfad in der .desktop-Datei anpassen, falls noetig
+```
+
+Die `.desktop`-Datei setzt `BIS_FULLSCREEN=1` selbst. Netzwerk speichern
+geht ueber NetworkManager (`nmcli`, Raspberry Pi OS Bookworm). Der
+Desktop-Benutzer braucht dafuer die Polkit-Berechtigung; der Prozess laeuft
+nicht als root. LAN setzt die statische Adresse auf Ethernet und trennt
+WLAN. WLAN verbindet die gewaehlte SSID und setzt dort die statische Adresse.
 
 ## 5. Betrieb / Troubleshooting
 
@@ -140,6 +194,7 @@ beim Start automatisch geladen.
 ```bash
 sudo systemctl stop bis-print-agent
 cp /pfad/zu/neuem/print_agent.py /opt/bis-print-agent/
+cp /pfad/zu/neuem/agent_*.py /opt/bis-print-agent/
 sudo systemctl start bis-print-agent
 ```
 
