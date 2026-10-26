@@ -157,23 +157,32 @@ die `.env` und setzt die statische Adresse am Adapter. Dafuer muss die App
 als Administrator gestartet werden. Ohne diese Rechte bleibt der Druck
 nutzbar, das Netzwerk wird nicht geaendert.
 
-### Raspberry Pi (2,4"-Display)
+### Raspberry Pi (Watterott RPi-Display)
 
-Das Display muss als normaler Bildschirm erscheinen (Tkinter mit Buttons),
-nicht als rohes SPI. In der `.env` `BIS_FULLSCREEN=1` setzen. Autostart in
-der bestehenden Desktop-Sitzung:
+Einrichtung fuer den Raspberry Pi 2 mit Watterott RPi-Display (2,8",
+320x240): [raspberry-pi.md](raspberry-pi.md).
+
+Das Display muss als normaler Bildschirm im Desktop erscheinen. Auf dem
+aktuellen Raspberry Pi OS steht dafuer in `/boot/firmware/config.txt`:
+
+```
+dtoverlay=watterott-display,drm,rotate=180,swapxy
+```
+
+Autostart in der Desktop-Sitzung, nicht als systemd-Dienst (der Dienst
+oeffnet kein Fenster und sperrt das Fenster):
 
 ```bash
 mkdir -p ~/.config/autostart
 cp /pfad/zu/print_agent_client/bis-print-agent.desktop ~/.config/autostart/
-# Exec-Pfad in der .desktop-Datei anpassen, falls noetig
 ```
 
 Die `.desktop`-Datei setzt `BIS_FULLSCREEN=1` selbst. Netzwerk speichern
-geht ueber NetworkManager (`nmcli`, Raspberry Pi OS Bookworm). Der
-Desktop-Benutzer braucht dafuer die Polkit-Berechtigung; der Prozess laeuft
-nicht als root. LAN setzt die statische Adresse auf Ethernet und trennt
-WLAN. WLAN verbindet die gewaehlte SSID und setzt dort die statische Adresse.
+geht ueber NetworkManager (`nmcli`). Der Desktop-Benutzer braucht dafuer
+die Polkit-Berechtigung; der Prozess laeuft nicht als root. LAN setzt die
+statische Adresse auf Ethernet und trennt WLAN. WLAN verbindet die
+gewaehlte SSID und setzt dort die statische Adresse. Der Pi 2 hat kein
+eingebautes WLAN.
 
 ## 5. Betrieb / Troubleshooting
 
