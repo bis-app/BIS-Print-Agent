@@ -175,8 +175,10 @@ sudo mkdir -p /opt/bis-print-agent
 sudo cp /home/pi/print_agent_client/print_agent.py /opt/bis-print-agent/
 sudo cp /home/pi/print_agent_client/agent_*.py /opt/bis-print-agent/
 sudo cp /home/pi/print_agent_client/requirements.txt /opt/bis-print-agent/
+sudo cp /home/pi/print_agent_client/bis-print-agent-start.sh /opt/bis-print-agent/
 sudo cp /home/pi/print_agent_client/.env.example /opt/bis-print-agent/.env
 sudo chown -R pi:pi /opt/bis-print-agent
+chmod +x /opt/bis-print-agent/bis-print-agent-start.sh
 python3 -m venv /opt/bis-print-agent/venv
 /opt/bis-print-agent/venv/bin/pip install -r /opt/bis-print-agent/requirements.txt
 nano /opt/bis-print-agent/.env
@@ -218,6 +220,28 @@ Abschnitt 6. Ohne URL oder Token bleibt das Fenster in den
 Einstellungen stehen. Mit gültigem Zugang erscheint im BIS unter
 `Adminbereich -> Druck-Agents` ein Herzschlag.
 
+Neu starten über eine zweite SSH-Sitzung. Es darf nur eine Instanz
+laufen; die Sperre `/tmp/bis-print-agent.lock` gibt der Prozess beim
+Beenden frei. Die Datei selbst löschen bringt nichts, solange der
+Prozess noch lebt.
+
+```bash
+pkill -f /opt/bis-print-agent/bis-print-agent-start.sh
+pkill -f /opt/bis-print-agent/print_agent.py
+pgrep -af bis-print-agent || echo 'kein Agent mehr'
+```
+
+`pkill` trifft das Warteskript und das Fenster, egal ob sie aus dem
+Autostart oder aus einer offenen SSH-Sitzung kommen. `pgrep` darf danach
+nichts mehr zeigen. War der Dienst ohne Fenster doch eingerichtet, zusätzlich:
+
+```bash
+sudo systemctl disable --now bis-print-agent
+```
+
+Danach wie oben mit `DISPLAY=:0` neu starten. Ein Neustart des Pi macht
+dasselbe: der Autostart öffnet das Fenster einmal.
+
 Netzwerk am Pi prüfen, bevor ein Etikett gedruckt wird:
 
 ```bash
@@ -245,19 +269,23 @@ mkdir -p /home/pi/.config/autostart
 cp /home/pi/print_agent_client/bis-print-agent.desktop /home/pi/.config/autostart/
 ```
 
-Die Datei startet
-
-`/opt/bis-print-agent/venv/bin/python /opt/bis-print-agent/print_agent.py`
-
-mit `BIS_FULLSCREEN=1`. Nach einem Neustart muss das Statusfenster ohne
-Anmeldung auf dem TFT liegen.
+Die Datei startet `/opt/bis-print-agent/bis-print-agent-start.sh` mit
+`BIS_FULLSCREEN=1`. Das Skript wartet bis zu 60 Sekunden auf eine
+Default-Route und danach bis zu 30 Sekunden, bis die Uhr per NTP
+synchron ist. Erst dann öffnet es das Fenster. Kommt weder Netz noch
+Uhrzeit, startet das Fenster trotzdem, damit die Einstellungen erreichbar
+bleiben. Ein Start von Hand über SSH wartet nicht. Nach einem Neustart
+muss das Statusfenster ohne Anmeldung auf dem TFT liegen.
 
 ## 7. Aktualisieren
 
 ```bash
 sudo cp /home/pi/print_agent_client/print_agent.py /opt/bis-print-agent/
 sudo cp /home/pi/print_agent_client/agent_*.py /opt/bis-print-agent/
-sudo chown pi:pi /opt/bis-print-agent/print_agent.py /opt/bis-print-agent/agent_*.py
+sudo cp /home/pi/print_agent_client/bis-print-agent-start.sh /opt/bis-print-agent/
+sudo chown pi:pi /opt/bis-print-agent/print_agent.py /opt/bis-print-agent/agent_*.py /opt/bis-print-agent/bis-print-agent-start.sh
+chmod +x /opt/bis-print-agent/bis-print-agent-start.sh
+cp /home/pi/print_agent_client/bis-print-agent.desktop /home/pi/.config/autostart/
 sudo reboot
 ```
 
@@ -274,6 +302,7 @@ Abschnitt 4 auf den Pi legen.
 | `udevadm` zeigt keine `CALIBRATION` | Gerätenamen aus `N: Name` in die Regel übernehmen, neu starten. |
 | Fenster sagt, der Dienst laufe | `sudo systemctl disable --now bis-print-agent`, Sperrdatei `/tmp/bis-print-agent.lock` ist danach frei. |
 | `Token wurde abgelehnt (401)` | Token im BIS neu erzeugen, `.env` anpassen, Agent neu starten. |
+| Direkt nach dem Einschalten „Server: nicht erreichbar“ | Der erste Poll lief vor Route oder Uhr. Die Zeile wechselt von selbst, sobald beides steht. Bleibt sie rot: `curl -I` gegen die BIS-URL und `timedatectl`. |
 | Herzschlag bleibt aus | `curl -I` gegen die BIS-URL, Uhr mit `timedatectl` prüfen. |
 | Auftrag bleibt auf `leased` | Agent war weg. Nach 60 Sekunden setzt der Server den Auftrag auf `pending`. |
 | Auftrag auf `error` | Text unter `Adminbereich -> Druck-Queue`. „Erneut zustellen“ setzt ihn zurück. Drucker-IP und Port 9100 prüfen. |

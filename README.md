@@ -177,8 +177,10 @@ mkdir -p ~/.config/autostart
 cp /pfad/zu/print_agent_client/bis-print-agent.desktop ~/.config/autostart/
 ```
 
-Die `.desktop`-Datei setzt `BIS_FULLSCREEN=1` selbst. Netzwerk speichern
-geht ueber NetworkManager (`nmcli`). Der Desktop-Benutzer braucht dafuer
+Die `.desktop`-Datei setzt `BIS_FULLSCREEN=1` selbst und startet
+`bis-print-agent-start.sh`. Das Skript wartet auf Route und NTP, bevor
+das Fenster aufgeht. Netzwerk speichern geht ueber NetworkManager
+(`nmcli`). Der Desktop-Benutzer braucht dafuer
 die Polkit-Berechtigung; der Prozess laeuft nicht als root. LAN setzt die
 statische Adresse auf Ethernet und trennt WLAN. WLAN verbindet die
 gewaehlte SSID und setzt dort die statische Adresse. Der Pi 2 hat kein
