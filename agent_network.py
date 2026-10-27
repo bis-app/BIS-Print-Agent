@@ -8,7 +8,7 @@ import socket
 import struct
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 Runner = Callable[..., tuple[int, str, str]]
@@ -21,14 +21,32 @@ class NetworkError(Exception):
     pass
 
 
+METRIC_PREFERRED = '100'
+METRIC_FALLBACK = '600'
+
+
+@dataclass(frozen=True)
+class IfConfig:
+    """Eine Schnittstelle. Leer: DHCP aus und keine IP."""
+
+    dhcp: bool = False
+    ip: str = ''
+    mask: str = ''
+    gateway: str = ''
+    dns: str = ''
+    printer_net: bool = False
+
+    def is_empty(self) -> bool:
+        return not self.printer_net and not self.dhcp and not (self.ip or '').strip()
+
+
 @dataclass(frozen=True)
 class NetworkState:
-    mode: str
-    ip: str
-    mask: str
-    gateway: str
-    ssid: str
-    interface: str = ''
+    lan: IfConfig = field(default_factory=IfConfig)
+    wlan: IfConfig = field(default_factory=IfConfig)
+    ssid: str = ''
+    lan_interface: str = ''
+    wlan_interface: str = ''
 
 
 def is_ipv4(value: str) -> bool:
@@ -71,18 +89,30 @@ def mask_to_prefix(mask: str) -> int:
     return bin(packed).count('1')
 
 
-def validate_static(ip: str, mask: str, gateway: str) -> int:
-    """Liefert den Präfix oder wirft NetworkError."""
+def _prefix(ip: str, mask: str) -> int:
     if not is_ipv4(ip):
         raise NetworkError('IP-Adresse ist ungültig.')
     if not is_netmask(mask):
         raise NetworkError('Subnetzmaske ist ungültig.')
-    if not is_ipv4(gateway):
-        raise NetworkError('Gateway ist ungültig.')
     prefix = mask_to_prefix(mask)
     if prefix < 1 or prefix > 30:
         raise NetworkError('Subnetzmaske ist ungültig.')
     return prefix
+
+
+def validate_static(ip: str, mask: str, gateway: str, dns: str) -> int:
+    """Liefert den Präfix oder wirft NetworkError."""
+    prefix = _prefix(ip, mask)
+    if not is_ipv4(gateway):
+        raise NetworkError('Gateway ist ungültig.')
+    if not is_ipv4(dns):
+        raise NetworkError('DNS-Server ist ungültig.')
+    return prefix
+
+
+def validate_printer(ip: str, mask: str) -> int:
+    """Adresse des Pi im Druckernetz, ohne Gateway."""
+    return _prefix(ip, mask)
 
 
 def _public_error(text: str, secret: str = '') -> str:
@@ -135,10 +165,11 @@ def parse_nmcli_devices(text: str) -> list[dict[str, str]]:
     return rows
 
 
-def parse_nmcli_ip(text: str) -> tuple[str, int | None, str]:
+def parse_nmcli_ip(text: str) -> tuple[str, int | None, str, str]:
     ip = ''
     prefix: int | None = None
     gateway = ''
+    dns = ''
     for line in text.splitlines():
         key, _, value = line.partition(':')
         value = value.strip()
@@ -149,7 +180,9 @@ def parse_nmcli_ip(text: str) -> tuple[str, int | None, str]:
                 prefix = int(pref)
         elif key == 'IP4.GATEWAY' and value and not gateway:
             gateway = value
-    return ip, prefix, gateway
+        elif key.startswith('IP4.DNS') and value and not dns and is_ipv4(value.split()[0]):
+            dns = value.split()[0]
+    return ip, prefix, gateway, dns
 
 
 def parse_ssid_list(text: str) -> list[str]:
@@ -272,33 +305,55 @@ class NmcliBackend:
             raise NetworkError(_public_error(err or out or 'Netzwerk konnte nicht gelesen werden.'))
         return parse_nmcli_devices(out)
 
+    def _read_link(self, device: str) -> IfConfig:
+        if not device:
+            return IfConfig()
+        code, show, _err = self._run([
+            'nmcli', '-t', '-f', 'GENERAL.CONNECTION,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS',
+            'device', 'show', device,
+        ])
+        if code != 0:
+            return IfConfig()
+        ip, prefix, gateway, dns = parse_nmcli_ip(show)
+        mask = ''
+        if prefix is not None and 0 < prefix <= 32:
+            mask = prefix_to_mask(prefix)
+        dhcp = False
+        printer = False
+        con_name = parse_connection_field(show)
+        if con_name:
+            code, method, _err = self._run([
+                'nmcli', '-g', 'ipv4.method', 'connection', 'show', con_name,
+            ])
+            if code == 0 and method.strip() == 'auto':
+                dhcp = True
+            code, never, _err = self._run([
+                'nmcli', '-g', 'ipv4.never-default', 'connection', 'show', con_name,
+            ])
+            if code == 0 and never.strip().lower() in ('yes', 'ja'):
+                printer = True
+        if printer:
+            return IfConfig(ip=ip, mask=mask, printer_net=True)
+        return IfConfig(dhcp=dhcp, ip=ip, mask=mask, gateway=gateway, dns=dns)
+
     def read(self) -> NetworkState:
         devices = self._devices()
         eth = _first_device(devices, 'ethernet')
         wifi = _first_device(devices, 'wifi')
-        wifi_up = any(row['device'] == wifi and row['state'] == 'connected' for row in devices) if wifi else False
-        eth_up = any(row['device'] == eth and row['state'] == 'connected' for row in devices) if eth else False
-        mode = 'wlan' if wifi_up and not eth_up else 'lan'
-        iface = wifi if mode == 'wlan' else eth
-        ip = ''
-        mask = ''
-        gateway = ''
         ssid = ''
-        if iface:
-            code, show, err = self._run([
-                'nmcli', '-t', '-f', 'IP4.ADDRESS,IP4.GATEWAY', 'device', 'show', iface,
-            ])
-            if code == 0:
-                ip, prefix, gateway = parse_nmcli_ip(show)
-                if prefix is not None and 0 <= prefix <= 32:
-                    mask = prefix_to_mask(prefix)
         if wifi:
             code, wout, _err = self._run([
                 'nmcli', '-t', '-f', 'ACTIVE,SSID', 'device', 'wifi', 'list', 'ifname', wifi,
             ])
             if code == 0:
                 ssid = parse_active_ssid(wout)
-        return NetworkState(mode=mode, ip=ip, mask=mask, gateway=gateway, ssid=ssid, interface=iface)
+        return NetworkState(
+            lan=self._read_link(eth),
+            wlan=self._read_link(wifi),
+            ssid=ssid,
+            lan_interface=eth,
+            wlan_interface=wifi,
+        )
 
     def prepare_wifi_scan(self) -> None:
         self._run(['nmcli', 'radio', 'wifi', 'on'])
@@ -332,81 +387,106 @@ class NmcliBackend:
             return ''
         return parse_active_ssid(out)
 
-    def _quiesce(self, device: str) -> None:
-        if not device:
-            return
-        code, out, _err = self._run(['nmcli', '-t', '-f', 'GENERAL.CONNECTION', 'device', 'show', device])
-        if code == 0:
-            name = parse_connection_field(out)
-            if name:
-                self._run(['nmcli', 'connection', 'modify', name, 'connection.autoconnect', 'no'])
-        self._run(['nmcli', 'device', 'disconnect', device])
+    def _office_settings(self, cfg: IfConfig, clear: bool, metric: str) -> list[str]:
+        route = ['ipv4.route-metric', metric, 'ipv4.never-default', 'no']
+        if cfg.dhcp:
+            settings = ['ipv4.method', 'auto', 'ipv4.ignore-auto-dns', 'no', *route]
+            if clear:
+                settings += ['ipv4.addresses', '', 'ipv4.gateway', '', 'ipv4.dns', '']
+            return settings
+        prefix = validate_static(cfg.ip, cfg.mask, cfg.gateway, cfg.dns)
+        return [
+            'ipv4.method', 'manual',
+            'ipv4.addresses', f'{cfg.ip}/{prefix}',
+            'ipv4.gateway', cfg.gateway,
+            'ipv4.dns', cfg.dns,
+            'ipv4.ignore-auto-dns', 'yes',
+            *route,
+        ]
 
-    def apply(self, state: NetworkState, password: str) -> None:
-        allowed, reason = self.can_apply()
-        if not allowed:
-            raise NetworkError(reason)
-        prefix = validate_static(state.ip, state.mask, state.gateway)
-        address = f'{state.ip}/{prefix}'
-        devices = self._devices()
-        eth = _first_device(devices, 'ethernet')
-        wifi = _first_device(devices, 'wifi')
-        names = self._connection_names()
-        if state.mode == 'lan':
-            if not eth:
-                raise NetworkError('Kein LAN-Adapter gefunden.')
-            if CON_LAN in names:
-                self._must([
-                    'nmcli', 'connection', 'modify', CON_LAN,
-                    'connection.interface-name', eth,
-                    'ipv4.method', 'manual',
-                    'ipv4.addresses', address,
-                    'ipv4.gateway', state.gateway,
-                    'connection.autoconnect', 'yes',
-                ])
-            else:
-                self._must([
-                    'nmcli', 'connection', 'add', 'type', 'ethernet',
-                    'ifname', eth, 'con-name', CON_LAN,
-                    'ipv4.method', 'manual',
-                    'ipv4.addresses', address,
-                    'ipv4.gateway', state.gateway,
-                ])
-            self._must(['nmcli', 'connection', 'up', CON_LAN])
-            self._quiesce(wifi)
-            return
+    def _printer_settings(self, cfg: IfConfig, clear: bool) -> list[str]:
+        prefix = validate_printer(cfg.ip, cfg.mask)
+        settings = [
+            'ipv4.method', 'manual',
+            'ipv4.addresses', f'{cfg.ip}/{prefix}',
+            'ipv4.never-default', 'yes',
+            'ipv4.ignore-auto-dns', 'yes',
+        ]
+        if clear:
+            settings += ['ipv4.gateway', '', 'ipv4.dns', '']
+        return settings
+
+    def _ipv4_for(self, cfg: IfConfig, clear: bool, metric: str) -> list[str]:
+        if cfg.printer_net:
+            return self._printer_settings(cfg, clear)
+        return self._office_settings(cfg, clear, metric)
+
+    def _apply_lan(self, cfg: IfConfig, eth: str, names: set[str], metric: str) -> None:
+        if not eth:
+            raise NetworkError('Kein LAN-Adapter gefunden.')
+        fresh = self._ipv4_for(cfg, clear=False, metric=metric)
+        existing = self._ipv4_for(cfg, clear=True, metric=metric)
+        if CON_LAN in names:
+            self._must([
+                'nmcli', 'connection', 'modify', CON_LAN,
+                'connection.interface-name', eth,
+                *existing,
+                'connection.autoconnect', 'yes',
+            ])
+        else:
+            self._must([
+                'nmcli', 'connection', 'add', 'type', 'ethernet',
+                'ifname', eth, 'con-name', CON_LAN,
+                *fresh,
+            ])
+        self._must(['nmcli', 'connection', 'up', CON_LAN])
+
+    def _apply_wifi(self, cfg: IfConfig, wifi: str, names: set[str], ssid: str, password: str) -> None:
         if not wifi:
             raise NetworkError('Kein WLAN-Adapter gefunden.')
-        if not state.ssid:
+        if not ssid:
             raise NetworkError('WLAN-Netz fehlt.')
-        if not password and (state.ssid != self._active_ssid(wifi) or CON_WLAN not in names):
+        if not password and (ssid != self._active_ssid(wifi) or CON_WLAN not in names):
             raise NetworkError('WLAN-Passwort fehlt.')
-        args = [
-            'connection.interface-name', wifi,
-            '802-11-wireless.ssid', state.ssid,
-            'ipv4.method', 'manual',
-            'ipv4.addresses', address,
-            'ipv4.gateway', state.gateway,
-            'connection.autoconnect', 'yes',
-        ]
-        if password:
-            args += ['802-11-wireless-security.key-mgmt', 'wpa-psk', '802-11-wireless-security.psk', password]
+        ipv4 = self._office_settings(cfg, clear=CON_WLAN in names, metric=METRIC_PREFERRED)
         if CON_WLAN in names:
-            self._must(['nmcli', 'connection', 'modify', CON_WLAN, *args], secret=password)
+            args = [
+                'nmcli', 'connection', 'modify', CON_WLAN,
+                'connection.interface-name', wifi,
+                '802-11-wireless.ssid', ssid,
+                *ipv4,
+                'connection.autoconnect', 'yes',
+            ]
+            if password:
+                args += ['802-11-wireless-security.key-mgmt', 'wpa-psk', '802-11-wireless-security.psk', password]
+            self._must(args, secret=password)
         else:
             if not password:
                 raise NetworkError('WLAN-Passwort fehlt.')
             self._must([
                 'nmcli', 'connection', 'add', 'type', 'wifi',
-                'ifname', wifi, 'con-name', CON_WLAN, 'ssid', state.ssid,
-                'ipv4.method', 'manual',
-                'ipv4.addresses', address,
-                'ipv4.gateway', state.gateway,
+                'ifname', wifi, 'con-name', CON_WLAN, 'ssid', ssid,
+                *self._office_settings(cfg, clear=False, metric=METRIC_PREFERRED),
                 'wifi-sec.key-mgmt', 'wpa-psk',
                 'wifi-sec.psk', password,
             ], secret=password)
         self._must(['nmcli', 'connection', 'up', CON_WLAN], secret=password)
-        self._quiesce(eth)
+
+    def apply(self, state: NetworkState, password: str) -> None:
+        allowed, reason = self.can_apply()
+        if not allowed:
+            raise NetworkError(reason)
+        if state.lan.printer_net and state.wlan.is_empty():
+            raise NetworkError('Für das Druckernetz braucht das WLAN einen Zugang.')
+        devices = self._devices()
+        eth = _first_device(devices, 'ethernet')
+        wifi = _first_device(devices, 'wifi')
+        names = self._connection_names()
+        if not state.wlan.is_empty():
+            self._apply_wifi(state.wlan, wifi, names, state.ssid, password)
+        if not state.lan.is_empty():
+            metric = METRIC_FALLBACK if not state.wlan.is_empty() else METRIC_PREFERRED
+            self._apply_lan(state.lan, eth, names, metric)
 
 
 def _adapter_kind(name: str, media: str) -> str:
@@ -439,6 +519,8 @@ def parse_windows_adapters(payload) -> list[dict]:
             'ip': str(item.get('IP') or ''),
             'prefix': int(prefix) if isinstance(prefix, int) or (isinstance(prefix, str) and prefix.isdigit()) else None,
             'gateway': str(item.get('Gateway') or ''),
+            'dns': str(item.get('Dns') or ''),
+            'dhcp': bool(item.get('Dhcp')),
         })
     return [row for row in rows if row['name']]
 
@@ -459,6 +541,10 @@ $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | ForEach-O
     Select-Object -First 1
   $gw = Get-NetRoute -InterfaceAlias $_.Name -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
     Select-Object -First 1
+  $ipif = Get-NetIPInterface -InterfaceAlias $_.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+  $dns4 = @(Get-DnsClientServerAddress -InterfaceAlias $_.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    ForEach-Object { $_.ServerAddresses } | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' })
   [PSCustomObject]@{
     Name = $_.Name
     Status = [string]$_.Status
@@ -466,6 +552,8 @@ $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | ForEach-O
     IP = $(if ($null -ne $ip) { $ip.IPAddress } else { '' })
     Prefix = $(if ($null -ne $ip) { [int]$ip.PrefixLength } else { $null })
     Gateway = $(if ($null -ne $gw) { [string]$gw.NextHop } else { '' })
+    Dns = $(if ($dns4.Count -gt 0) { [string]$dns4[0] } else { '' })
+    Dhcp = [bool]($null -ne $ipif -and [string]$ipif.Dhcp -eq 'Enabled')
   }
 })
 $adapters | ConvertTo-Json -Compress
@@ -481,7 +569,34 @@ Get-NetIPAddress -InterfaceAlias $alias -AddressFamily IPv4 -ErrorAction Silentl
 Get-NetRoute -InterfaceAlias $alias -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
   Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
 Set-NetIPInterface -InterfaceAlias $alias -Dhcp Disabled -ErrorAction SilentlyContinue
-New-NetIPAddress -InterfaceAlias $alias -IPAddress $env:BIS_IP -PrefixLength $prefix -DefaultGateway $env:BIS_GW | Out-Null
+if ($env:BIS_GW) {
+  New-NetIPAddress -InterfaceAlias $alias -IPAddress $env:BIS_IP -PrefixLength $prefix -DefaultGateway $env:BIS_GW | Out-Null
+} else {
+  New-NetIPAddress -InterfaceAlias $alias -IPAddress $env:BIS_IP -PrefixLength $prefix | Out-Null
+}
+if ($env:BIS_DNS) {
+  Set-DnsClientServerAddress -InterfaceAlias $alias -ServerAddresses $env:BIS_DNS
+} else {
+  Set-DnsClientServerAddress -InterfaceAlias $alias -ResetServerAddresses
+}
+if ($env:BIS_METRIC) {
+  Set-NetIPInterface -InterfaceAlias $alias -InterfaceMetric ([int]$env:BIS_METRIC)
+}
+'''
+
+_PS_DHCP = r'''
+$ErrorActionPreference = 'Stop'
+$alias = $env:BIS_IF_ALIAS
+Set-NetIPInterface -InterfaceAlias $alias -AddressFamily IPv4 -Dhcp Enabled
+Get-NetIPAddress -InterfaceAlias $alias -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Where-Object { $_.PrefixOrigin -eq 'Manual' } |
+  Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
+Get-NetRoute -InterfaceAlias $alias -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+  Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
+Set-DnsClientServerAddress -InterfaceAlias $alias -ResetServerAddresses
+if ($env:BIS_METRIC) {
+  Set-NetIPInterface -InterfaceAlias $alias -InterfaceMetric ([int]$env:BIS_METRIC)
+}
 '''
 
 _PS_ADAPTER_ACTION = r'''
@@ -546,27 +661,33 @@ class WindowsBackend:
             return ''
         return parse_netsh_interfaces_ssid(out)
 
+    def _link_from(self, chosen: dict | None) -> tuple[IfConfig, str]:
+        if not chosen:
+            return IfConfig(), ''
+        ip = chosen['ip']
+        gateway = chosen['gateway']
+        dns = chosen['dns']
+        dhcp = chosen['dhcp']
+        mask = ''
+        if chosen['prefix'] is not None and chosen['prefix'] > 0:
+            mask = prefix_to_mask(chosen['prefix'])
+        printer = bool(ip) and not dhcp and not gateway
+        return IfConfig(
+            dhcp=dhcp, ip=ip, mask=mask,
+            gateway='' if printer else gateway,
+            dns='' if printer else dns,
+            printer_net=printer,
+        ), chosen['name']
+
     def read(self) -> NetworkState:
         adapters = self._adapters()
         eth = _pick_adapter(adapters, 'lan')
         wifi = _pick_adapter(adapters, 'wlan')
-        ssid = self._current_ssid()
-        wifi_up = bool(wifi and _is_up(wifi['status'], wifi['ip']))
-        eth_up = bool(eth and _is_up(eth['status'], eth['ip']))
-        mode = 'wlan' if wifi_up and not eth_up else 'lan'
-        chosen = wifi if mode == 'wlan' else eth
-        if chosen is None:
-            chosen = eth or wifi
-        ip = mask = gateway = ''
-        interface = ''
-        if chosen:
-            interface = chosen['name']
-            ip = chosen['ip']
-            gateway = chosen['gateway']
-            if chosen['prefix'] is not None:
-                mask = prefix_to_mask(chosen['prefix'])
+        lan, lan_name = self._link_from(eth)
+        wlan, wlan_name = self._link_from(wifi)
         return NetworkState(
-            mode=mode, ip=ip, mask=mask, gateway=gateway, ssid=ssid, interface=interface,
+            lan=lan, wlan=wlan, ssid=self._current_ssid(),
+            lan_interface=lan_name, wlan_interface=wlan_name,
         )
 
     def prepare_wifi_scan(self) -> None:
@@ -597,13 +718,18 @@ class WindowsBackend:
             'BIS_IF_ACTION': 'enable' if enabled else 'disable',
         })
 
-    def _set_static(self, name: str, ip: str, prefix: int, gateway: str) -> None:
+    def _set_static(self, name: str, cfg: IfConfig, prefix: int, metric: str) -> None:
         self._ps(_PS_STATIC, {
             'BIS_IF_ALIAS': name,
-            'BIS_IP': ip,
+            'BIS_IP': cfg.ip,
             'BIS_PREFIX': str(prefix),
-            'BIS_GW': gateway,
+            'BIS_GW': '' if cfg.printer_net else cfg.gateway,
+            'BIS_DNS': '' if cfg.printer_net else cfg.dns,
+            'BIS_METRIC': metric,
         })
+
+    def _set_dhcp(self, name: str, metric: str) -> None:
+        self._ps(_PS_DHCP, {'BIS_IF_ALIAS': name, 'BIS_METRIC': metric})
 
     def _connect_wifi(self, ssid: str, password: str) -> None:
         xml = build_wlan_profile_xml(ssid, password)
@@ -629,39 +755,47 @@ class WindowsBackend:
         if code != 0:
             raise NetworkError(_public_error(err or out, password))
 
+    def _apply_windows_link(self, name: str, cfg: IfConfig, metric: str) -> None:
+        self._set_adapter(name, True)
+        if cfg.printer_net:
+            prefix = validate_printer(cfg.ip, cfg.mask)
+            self._set_static(name, cfg, prefix, metric)
+            return
+        if cfg.dhcp:
+            self._set_dhcp(name, metric)
+            return
+        prefix = validate_static(cfg.ip, cfg.mask, cfg.gateway, cfg.dns)
+        self._set_static(name, cfg, prefix, metric)
+
     def apply(self, state: NetworkState, password: str) -> None:
         allowed, reason = self.can_apply()
         if not allowed:
             raise NetworkError(reason)
-        prefix = validate_static(state.ip, state.mask, state.gateway)
+        if state.lan.printer_net and state.wlan.is_empty():
+            raise NetworkError('Für das Druckernetz braucht das WLAN einen Zugang.')
         adapters = self._adapters()
         eth = _pick_adapter(adapters, 'lan')
         wifi = _pick_adapter(adapters, 'wlan')
-        if state.mode == 'lan':
+        if not state.wlan.is_empty():
+            if not wifi:
+                raise NetworkError('Kein WLAN-Adapter gefunden.')
+            if not state.ssid:
+                raise NetworkError('WLAN-Netz fehlt.')
+            current = self._current_ssid()
+            if not password and state.ssid != current:
+                raise NetworkError('WLAN-Passwort fehlt.')
+            if password:
+                self._connect_wifi(state.ssid, password)
+            elif state.ssid != current:
+                code, out, err = self._run(['netsh', 'wlan', 'connect', f'name={state.ssid}', f'ssid={state.ssid}'])
+                if code != 0:
+                    raise NetworkError(_public_error(err or out or 'WLAN-Passwort fehlt.'))
+            self._apply_windows_link(wifi['name'], state.wlan, METRIC_PREFERRED)
+        if not state.lan.is_empty():
             if not eth:
                 raise NetworkError('Kein LAN-Adapter gefunden.')
-            self._set_adapter(eth['name'], True)
-            self._set_static(eth['name'], state.ip, prefix, state.gateway)
-            if wifi and _is_up(wifi['status'], wifi['ip']):
-                self._set_adapter(wifi['name'], False)
-            return
-        if not wifi:
-            raise NetworkError('Kein WLAN-Adapter gefunden.')
-        if not state.ssid:
-            raise NetworkError('WLAN-Netz fehlt.')
-        current = self._current_ssid()
-        if not password and state.ssid != current:
-            raise NetworkError('WLAN-Passwort fehlt.')
-        self._set_adapter(wifi['name'], True)
-        if password:
-            self._connect_wifi(state.ssid, password)
-        else:
-            code, out, err = self._run(['netsh', 'wlan', 'connect', f'name={state.ssid}', f'ssid={state.ssid}'])
-            if code != 0:
-                raise NetworkError(_public_error(err or out or 'WLAN-Passwort fehlt.'))
-        self._set_static(wifi['name'], state.ip, prefix, state.gateway)
-        if eth and _is_up(eth['status'], eth['ip']):
-            self._set_adapter(eth['name'], False)
+            metric = METRIC_FALLBACK if not state.wlan.is_empty() else METRIC_PREFERRED
+            self._apply_windows_link(eth['name'], state.lan, metric)
 
 
 def get_backend():

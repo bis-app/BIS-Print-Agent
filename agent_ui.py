@@ -8,7 +8,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 
 from agent_config import AgentConfig, is_base_url, save_connection
-from agent_network import NetworkError, NetworkState, validate_static
+from agent_network import IfConfig, NetworkError, NetworkState, validate_printer, validate_static
 
 WIDTH = 320
 HEIGHT = 240
@@ -33,6 +33,11 @@ class AgentWindow:
         self.font_b.configure(weight='bold', size=9)
         self.mode = 'lan'
         self._ssid = ''
+        self._lan = IfConfig()
+        self._wlan = IfConfig()
+        self._seen_lan = IfConfig()
+        self._seen_wlan = IfConfig()
+        self._filling = False
 
         root.title('BIS Druck')
         root.configure(bg=BG)
@@ -65,12 +70,11 @@ class AgentWindow:
     def show_settings(self) -> None:
         self._fill_connection()
         self._show(self.settings_page)
-        snapshot = (self.mode, self.ip_var.get(), self.mask_var.get(), self.gw_var.get())
+        snapshot = self._snapshot()
         self._set_message('Netzwerk wird gelesen …', MUTED)
 
         def done(state, error):
-            current = (self.mode, self.ip_var.get(), self.mask_var.get(), self.gw_var.get())
-            if current != snapshot:
+            if self._snapshot() != snapshot:
                 if self.msg_var.get() == 'Netzwerk wird gelesen …':
                     self._set_message('', MUTED)
                 return
@@ -115,23 +119,39 @@ class AgentWindow:
         self.ip_var = tk.StringVar()
         self.mask_var = tk.StringVar()
         self.gw_var = tk.StringVar()
+        self.dns_var = tk.StringVar()
+        self.dhcp_var = tk.BooleanVar(value=False)
+        self.printer_var = tk.BooleanVar(value=False)
         self.msg_var = tk.StringVar()
         form = tk.Frame(page, bg=BG)
-        form.pack(fill='x', padx=6, pady=4)
+        form.pack(fill='x', padx=6, pady=2)
         self._row(form, 'Server-URL', self.url_var)
         self._row(form, 'Token', self.token_var)
         modes = tk.Frame(form, bg=BG)
-        modes.pack(fill='x', pady=2)
+        modes.pack(fill='x', pady=1)
         self.lan_btn = tk.Button(modes, text='LAN', font=self.font_b, command=lambda: self._set_mode('lan'))
         self.wlan_btn = tk.Button(modes, text='WLAN', font=self.font_b, command=lambda: self._set_mode('wlan'))
-        self.lan_btn.pack(side='left', expand=True, fill='x', padx=(0, 2), ipady=2)
-        self.wlan_btn.pack(side='left', expand=True, fill='x', padx=(2, 0), ipady=2)
-        self._row(form, 'IP-Adresse', self.ip_var)
-        self._row(form, 'Subnetzmaske', self.mask_var)
-        self._row(form, 'Gateway', self.gw_var)
+        self.lan_btn.pack(side='left', expand=True, fill='x', padx=(0, 2), ipady=1)
+        self.wlan_btn.pack(side='left', expand=True, fill='x', padx=(2, 0), ipady=1)
+        self.printer_chk = tk.Checkbutton(
+            form, text='Druckernetz', variable=self.printer_var, command=self._on_printer,
+            font=self.font, bg=BG, fg=FG, activebackground=BG, activeforeground=FG,
+            selectcolor=FIELD, anchor='w', highlightthickness=0,
+        )
+        self.dhcp_chk = tk.Checkbutton(
+            form, text='DHCP', variable=self.dhcp_var, command=self._on_dhcp,
+            font=self.font, bg=BG, fg=FG, activebackground=BG, activeforeground=FG,
+            selectcolor=FIELD, anchor='w', highlightthickness=0,
+        )
+        self.printer_chk.pack(fill='x')
+        self.dhcp_chk.pack(fill='x')
+        self.ip_row, self.ip_entry = self._row(form, 'IP-Adresse', self.ip_var)
+        self.mask_row, self.mask_entry = self._row(form, 'Subnetzmaske', self.mask_var)
+        self.gw_row, self.gw_entry = self._row(form, 'Gateway', self.gw_var)
+        self.dns_row, self.dns_entry = self._row(form, 'DNS-Server', self.dns_var)
         self.msg_lbl = tk.Label(
             page, textvariable=self.msg_var, font=self.font, bg=BG, fg=MUTED,
-            anchor='w', justify='left', wraplength=300, height=2,
+            anchor='w', justify='left', wraplength=300, height=1,
         )
         self.msg_lbl.pack(fill='x', padx=6)
         buttons = tk.Frame(page, bg=BG)
@@ -145,6 +165,7 @@ class AgentWindow:
         )
         self.save_btn.pack(side='right', ipady=2)
         self._set_mode('lan')
+        self._lock_address_fields()
 
     def _build_wlan(self) -> None:
         page = self.wlan_page
@@ -167,20 +188,103 @@ class AgentWindow:
             bg=ACCENT, fg='white', activebackground=ACCENT, activeforeground='white',
         ).pack(side='right', ipady=2)
 
-    def _row(self, parent, label: str, variable: tk.StringVar, secret: bool = False) -> None:
+    def _row(self, parent, label: str, variable: tk.StringVar, secret: bool = False) -> tuple[tk.Frame, tk.Entry]:
         row = tk.Frame(parent, bg=BG)
-        row.pack(fill='x', pady=1)
+        row.pack(fill='x', pady=0)
         tk.Label(row, text=label, font=self.font, bg=BG, fg=FG, width=13, anchor='w').pack(side='left')
         entry = tk.Entry(row, textvariable=variable, font=self.font, bg=FIELD, show='*' if secret else '')
         entry.pack(side='left', fill='x', expand=True)
+        return row, entry
+
+    def _printer_on(self) -> bool:
+        return self.mode == 'lan' and bool(self.printer_var.get())
+
+    def _layout_fields(self) -> None:
+        office = not self._printer_on()
+        if self.mode == 'lan':
+            self.printer_chk.pack(fill='x', before=self.ip_row)
+        else:
+            self.printer_chk.pack_forget()
+        if office:
+            self.dhcp_chk.pack(fill='x', before=self.ip_row)
+            self.gw_row.pack(fill='x', after=self.mask_row)
+            self.dns_row.pack(fill='x', after=self.gw_row)
+        else:
+            self.dhcp_chk.pack_forget()
+            self.gw_row.pack_forget()
+            self.dns_row.pack_forget()
+        self._lock_address_fields()
+
+    def _lock_address_fields(self) -> None:
+        locked = 'disabled' if self.dhcp_var.get() and not self._printer_on() else 'normal'
+        for entry in (self.ip_entry, self.mask_entry, self.gw_entry, self.dns_entry):
+            entry.configure(state=locked)
+
+    def _on_dhcp(self) -> None:
+        if self._filling:
+            return
+        if self.dhcp_var.get() and not self._printer_on():
+            seen = self._seen_lan if self.mode == 'lan' else self._seen_wlan
+            self.ip_var.set(seen.ip)
+            self.mask_var.set(seen.mask)
+            self.gw_var.set(seen.gateway)
+            self.dns_var.set(seen.dns)
+        self._lock_address_fields()
+
+    def _on_printer(self) -> None:
+        if not self._filling:
+            self._layout_fields()
+
+    def _form_config(self) -> IfConfig:
+        if self._printer_on():
+            return IfConfig(
+                ip=self.ip_var.get().strip(),
+                mask=self.mask_var.get().strip(),
+                printer_net=True,
+            )
+        return IfConfig(
+            dhcp=bool(self.dhcp_var.get()),
+            ip=self.ip_var.get().strip(),
+            mask=self.mask_var.get().strip(),
+            gateway=self.gw_var.get().strip(),
+            dns=self.dns_var.get().strip(),
+        )
+
+    def _stash(self) -> None:
+        cfg = self._form_config()
+        if self.mode == 'lan':
+            self._lan = cfg
+        else:
+            self._wlan = cfg
+
+    def _fill_side(self) -> None:
+        cfg = self._lan if self.mode == 'lan' else self._wlan
+        self._filling = True
+        try:
+            self.printer_var.set(bool(cfg.printer_net))
+            self.dhcp_var.set(bool(cfg.dhcp))
+            self.ip_var.set(cfg.ip)
+            self.mask_var.set(cfg.mask)
+            self.gw_var.set(cfg.gateway)
+            self.dns_var.set(cfg.dns)
+            self._layout_fields()
+        finally:
+            self._filling = False
+
+    def _snapshot(self) -> tuple:
+        self._stash()
+        return (self.mode, self._lan, self._wlan, self._ssid)
 
     def _set_mode(self, mode: str) -> None:
-        self.mode = mode
+        if mode != self.mode:
+            self._stash()
+            self.mode = mode
         on = {'bg': ACCENT, 'fg': 'white', 'activebackground': ACCENT, 'activeforeground': 'white'}
         off = {'bg': '#e4dfd4', 'fg': FG, 'activebackground': '#e4dfd4', 'activeforeground': FG}
         self.lan_btn.configure(**(on if mode == 'lan' else off))
         self.wlan_btn.configure(**(on if mode == 'wlan' else off))
         self.netze_btn.configure(state='normal' if mode == 'wlan' else 'disabled')
+        self._fill_side()
 
     def _set_message(self, text: str, color: str = MUTED) -> None:
         self.msg_var.set(text)
@@ -254,11 +358,16 @@ class AgentWindow:
         self._set_message('', MUTED)
 
     def _apply_state(self, state: NetworkState) -> None:
-        self._set_mode(state.mode if state.mode in ('lan', 'wlan') else 'lan')
-        self.ip_var.set(state.ip)
-        self.mask_var.set(state.mask)
-        self.gw_var.set(state.gateway)
-        self._ssid = state.ssid
+        self._filling = True
+        try:
+            self._lan = state.lan
+            self._wlan = state.wlan
+            self._seen_lan = state.lan
+            self._seen_wlan = state.wlan
+            self._ssid = state.ssid
+            self._fill_side()
+        finally:
+            self._filling = False
 
     def show_wlan(self) -> None:
         if self.mode != 'wlan':
@@ -311,21 +420,35 @@ class AgentWindow:
         if not token:
             self._set_message('Token fehlt.', BAD)
             return
-        try:
-            validate_static(self.ip_var.get().strip(), self.mask_var.get().strip(), self.gw_var.get().strip())
-        except NetworkError as exc:
-            self._set_message(str(exc), BAD)
-            return
-        if self.mode == 'wlan' and not self._ssid:
-            self._set_message('Bitte ein WLAN wählen.', BAD)
-            return
-        state = NetworkState(
-            mode=self.mode,
-            ip=self.ip_var.get().strip(),
-            mask=self.mask_var.get().strip(),
-            gateway=self.gw_var.get().strip(),
-            ssid=self._ssid,
-        )
+        self._stash()
+        lan = self._lan
+        wlan = self._wlan
+        if lan.printer_net:
+            try:
+                validate_printer(lan.ip, lan.mask)
+            except NetworkError as exc:
+                self._set_message(str(exc), BAD)
+                return
+            if wlan.is_empty():
+                self._set_message('Für das Druckernetz braucht das WLAN einen Zugang.', BAD)
+                return
+        elif not lan.is_empty() and not lan.dhcp:
+            try:
+                validate_static(lan.ip, lan.mask, lan.gateway, lan.dns)
+            except NetworkError as exc:
+                self._set_message(str(exc), BAD)
+                return
+        if not wlan.is_empty():
+            if not wlan.dhcp:
+                try:
+                    validate_static(wlan.ip, wlan.mask, wlan.gateway, wlan.dns)
+                except NetworkError as exc:
+                    self._set_message(str(exc), BAD)
+                    return
+            if not self._ssid:
+                self._set_message('Bitte ein WLAN wählen.', BAD)
+                return
+        state = NetworkState(lan=lan, wlan=wlan, ssid=self._ssid)
         password = self.pass_var.get()
         self._busy = True
         self.save_btn.configure(state='disabled')
@@ -344,9 +467,13 @@ class AgentWindow:
             self.context.replace_config(cfg)
             allowed, reason = self.context.backend.can_apply()
             if not allowed:
-                return reason
+                return reason, None
             self.context.backend.apply(state, password)
-            return ''
+            try:
+                fresh = self.context.backend.read()
+            except NetworkError:
+                fresh = None
+            return '', fresh
 
         def done(result, error):
             self._busy = False
@@ -357,8 +484,11 @@ class AgentWindow:
             if error is not None:
                 self._set_message(str(error), BAD)
                 return
-            if result:
-                self._set_message(f'Zugang gespeichert. {result}', BAD)
+            text, fresh = result if isinstance(result, tuple) else (result, None)
+            if fresh is not None:
+                self._apply_state(fresh)
+            if text:
+                self._set_message(f'Zugang gespeichert. {text}', BAD)
                 return
             self.pass_var.set('')
             self._set_message('Gespeichert.', OK)

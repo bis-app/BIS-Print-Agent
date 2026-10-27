@@ -151,9 +151,14 @@ pythonw print_agent.py
 ```
 
 Das Fenster ist 320x240. Unter Einstellungen liegen Server-URL, Token,
-LAN/WLAN, IP-Adresse, Subnetzmaske und Gateway. Bei WLAN oeffnet "Netze"
-die SSID-Liste und das Passwortfeld. Speichern schreibt den BIS-Zugang in
-die `.env` und setzt die statische Adresse am Adapter. Dafuer muss die App
+LAN/WLAN, eine DHCP-Checkbox, IP-Adresse, Subnetzmaske, Gateway und
+DNS-Server. Bei WLAN oeffnet "Netze" die SSID-Liste. Auf LAN gibt es
+zusaetzlich „Druckernetz“: dann nur IP und Maske, ohne Standardroute,
+fuer Drucker hinter dem Rechner. WLAN bleibt in dem Fall der Weg ins Buero. Ist DHCP an, zeigen die Adressfelder die
+vom Netz erhaltenen Werte und lassen sich nicht ändern. Beide Anschlüsse
+bleiben aktiv; eine leere Seite wird nicht verbunden. Speichern schreibt
+den BIS-Zugang in
+die `.env` und setzt die ausgefuellten Anschlüsse. Dafuer muss die App
 als Administrator gestartet werden. Ohne diese Rechte bleibt der Druck
 nutzbar, das Netzwerk wird nicht geaendert.
 

@@ -257,10 +257,16 @@ SSH-Login. Fehlt das Recht, meldet die Oberfläche beim Speichern
 „Keine Berechtigung, das Netzwerk zu ändern.“ Der Druck selbst läuft
 trotzdem, solange der Pi den Server und die Drucker erreicht.
 
-Statische Adresse und WLAN werden in den Einstellungen gespeichert
-(Felder IP, Maske, Gateway, bei WLAN zusätzlich „Netze“). LAN legt das
-NetworkManager-Profil `bis-lan` auf Ethernet und trennt WLAN. WLAN legt
-`bis-wlan` an. Dafür ist kein root nötig.
+Statische Adresse und WLAN werden in den Einstellungen gespeichert.
+LAN und WLAN bleiben gleichzeitig aktiv. Leer (DHCP aus und keine IP)
+lässt den Anschluss unverändert. Ohne WLAN ist LAN der Anschluss ans Büro:
+DHCP oder IP, Maske, Gateway und DNS. Mit der Checkbox „Druckernetz“ ist
+LAN nur das Netz der Drucker am Pi (IP und Maske, keine Standardroute);
+WLAN trägt dann den Weg ins Büro. Der Zebra bekommt in diesem Netz eine
+feste Adresse, als Gateway die LAN-Adresse des Pi. Im BIS steht dieselbe
+Drucker-IP. Der Server spricht den Drucker nicht selbst an. NAT ist nicht
+nötig. Dafür legt LAN das Profil `bis-lan` auf Ethernet und WLAN das Profil
+`bis-wlan` an. Root ist dafür nicht nötig.
 
 ## 6. Autostart
 
