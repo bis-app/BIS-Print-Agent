@@ -121,7 +121,7 @@ class AgentWindow:
         self.gw_var = tk.StringVar()
         self.dns_var = tk.StringVar()
         self.dhcp_var = tk.BooleanVar(value=False)
-        self.printer_var = tk.BooleanVar(value=False)
+        self.printer_net_var = tk.BooleanVar(value=False)
         self.msg_var = tk.StringVar()
         form = tk.Frame(page, bg=BG)
         form.pack(fill='x', padx=6, pady=2)
@@ -134,7 +134,7 @@ class AgentWindow:
         self.lan_btn.pack(side='left', expand=True, fill='x', padx=(0, 2), ipady=1)
         self.wlan_btn.pack(side='left', expand=True, fill='x', padx=(2, 0), ipady=1)
         self.printer_chk = tk.Checkbutton(
-            form, text='Druckernetz', variable=self.printer_var, command=self._on_printer,
+            form, text='Druckernetz', variable=self.printer_net_var, command=self._on_printer,
             font=self.font, bg=BG, fg=FG, activebackground=BG, activeforeground=FG,
             selectcolor=FIELD, anchor='w', highlightthickness=0,
         )
@@ -197,7 +197,7 @@ class AgentWindow:
         return row, entry
 
     def _printer_on(self) -> bool:
-        return self.mode == 'lan' and bool(self.printer_var.get())
+        return self.mode == 'lan' and bool(self.printer_net_var.get())
 
     def _layout_fields(self) -> None:
         office = not self._printer_on()
@@ -261,7 +261,7 @@ class AgentWindow:
         cfg = self._lan if self.mode == 'lan' else self._wlan
         self._filling = True
         try:
-            self.printer_var.set(bool(cfg.printer_net))
+            self.printer_net_var.set(bool(cfg.printer_net))
             self.dhcp_var.set(bool(cfg.dhcp))
             self.ip_var.set(cfg.ip)
             self.mask_var.set(cfg.mask)
