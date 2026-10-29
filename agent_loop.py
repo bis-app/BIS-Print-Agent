@@ -62,6 +62,19 @@ def poll_once(
     now: str = '',
 ) -> tuple[bool, float]:
     """Einmal pollen. Liefert (Auftrag verarbeitet, Wartezeit in Sekunden)."""
+    try:
+        return _poll_once(session, base_url, status, send, now)
+    finally:
+        status.note_poll()
+
+
+def _poll_once(
+    session,
+    base_url: str,
+    status: AgentStatus,
+    send: SendZpl,
+    now: str,
+) -> tuple[bool, float]:
     url = f'{base_url}/api/agent/poll'
     try:
         response = session.post(url, timeout=30)

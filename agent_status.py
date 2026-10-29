@@ -30,6 +30,7 @@ class AgentStatus:
         self._last_error = ''
         self._last_contact = ''
         self._error_kind = ''
+        self._poll_seq = 0
 
     def snapshot(self) -> StatusSnapshot:
         with self._lock:
@@ -77,3 +78,11 @@ class AgentStatus:
             self._error_kind = 'druck' if error else ''
             if when:
                 self._last_contact = when
+
+    def poll_seq(self) -> int:
+        with self._lock:
+            return self._poll_seq
+
+    def note_poll(self) -> None:
+        with self._lock:
+            self._poll_seq += 1

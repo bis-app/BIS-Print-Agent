@@ -70,6 +70,12 @@ die übliche Sitzung. Geht das Bild trotzdem aus und
 `echo $XDG_SESSION_TYPE` zeigt `wayland`, die Zeile mit `swayidle` aus
 `/etc/xdg/labwc/autostart` in `~/.config/labwc/autostart` weglassen.
 
+Im Vollbild (`BIS_FULLSCREEN=1`) schaltet der Agent das Display nach
+30 Sekunden selbst aus. Der erste Tipp danach macht es nur wieder an
+und löst keinen Knopf aus. `do_blanking 1` bleibt, damit der Desktop
+nicht zusätzlich abdunkelt. Rechts oben blinkt bei jedem Poll zwei
+Sekunden ein Punkt.
+
 Der Pi 2 hat keine Echtzeituhr. HTTPS scheitert, wenn die Uhr weit daneben
 liegt. Nach dem Neustart prüfen:
 

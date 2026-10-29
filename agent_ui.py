@@ -8,6 +8,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 
 from agent_config import AgentConfig, is_base_url, save_connection
+from agent_display import IdleBlank, set_display_power
 from agent_network import IfConfig, NetworkError, NetworkState, validate_printer, validate_static
 
 WIDTH = 320
@@ -19,6 +20,100 @@ OK = '#1d6b3a'
 BAD = '#8d2f2f'
 MUTED = '#5c584f'
 FIELD = '#ffffff'
+LIVE_MS = 2000
+POLL_WATCH_MS = 200
+
+
+class ScreenBlank:
+    """Vollbild: nach 30s schwarz. Drücken schaltet nur das Licht ein."""
+
+    def __init__(self, root: tk.Tk, enabled: bool) -> None:
+        self.root = root
+        self.enabled = enabled
+        self.idle = IdleBlank()
+        self._after: str | None = None
+        self._cover: tk.Frame | None = None
+        self._prior_focus: tk.Misc | None = None
+        if not enabled:
+            return
+        self._cover = tk.Frame(root, bg='black', highlightthickness=0, takefocus=1)
+        self._cover.bind('<ButtonPress>', self._press)
+        self._cover.bind('<ButtonRelease>', self._release)
+        self._cover.bind('<KeyPress>', self._press)
+        self._cover.bind('<KeyRelease>', self._release)
+        root.bind_all('<ButtonPress>', self._note, add='+')
+        root.bind_all('<KeyPress>', self._note, add='+')
+        self.idle.activity(time.monotonic())
+        self._arm()
+
+    def _note(self, _event=None) -> None:
+        if not self.enabled or self.idle.asleep:
+            return
+        self.idle.activity(time.monotonic())
+        self._arm()
+
+    def _arm(self) -> None:
+        if self._after is not None:
+            self.root.after_cancel(self._after)
+            self._after = None
+        if not self.enabled or self.idle.asleep:
+            return
+        delay = max(1, int(self.idle.remaining(time.monotonic()) * 1000))
+        self._after = self.root.after(delay, self._on_idle)
+
+    def _on_idle(self) -> None:
+        self._after = None
+        if self.idle.tick(time.monotonic()):
+            self._show()
+            return
+        self._arm()
+
+    def _show(self) -> None:
+        cover = self._cover
+        if cover is None:
+            return
+        current = self.root.focus_get()
+        self._prior_focus = None if current is cover else current
+        cover.place(x=0, y=0, relwidth=1, relheight=1)
+        cover.lift()
+        self.root.update_idletasks()
+        try:
+            cover.grab_set()
+        except tk.TclError:
+            pass
+        cover.focus_set()
+        set_display_power(False)
+
+    def _press(self, _event=None):
+        set_display_power(True)
+        return 'break'
+
+    def _release(self, _event=None):
+        self._wake()
+        return 'break'
+
+    def _wake(self) -> None:
+        set_display_power(True)
+        self.idle.activity(time.monotonic())
+        cover = self._cover
+        if cover is not None:
+            try:
+                cover.grab_release()
+            except tk.TclError:
+                pass
+            cover.place_forget()
+        prior = self._prior_focus
+        self._prior_focus = None
+        if prior is not None:
+            try:
+                prior.focus_set()
+            except tk.TclError:
+                pass
+        self._arm()
+
+    def keep_cover_on_top(self) -> None:
+        if self._cover is not None and self.idle.asleep:
+            self._cover.lift()
 
 
 class AgentWindow:
@@ -57,8 +152,13 @@ class AgentWindow:
         self._build_status()
         self._build_settings()
         self._build_wlan()
+        self.live_lbl = tk.Label(self.shell, text='', font=self.font_b, bg=BG, fg=OK)
+        self._seen_poll = 0
+        self._live_after: str | None = None
+        self._blank = ScreenBlank(root, enabled=bool(context.fullscreen))
         self.show_status()
         self._tick()
+        self._watch_poll()
 
     def close(self) -> None:
         self.context.stop.set()
@@ -93,7 +193,9 @@ class AgentWindow:
         head.pack(fill='x', padx=8, pady=(6, 2))
         tk.Label(head, text='BIS Druck', font=self.font_b, bg=BG, fg=FG).pack(side='left')
         self.clock_var = tk.StringVar(value='--:--')
-        tk.Label(head, textvariable=self.clock_var, font=self.font, bg=BG, fg=MUTED).pack(side='right')
+        tk.Label(
+            head, textvariable=self.clock_var, font=self.font, bg=BG, fg=MUTED,
+        ).pack(side='right', padx=(0, 14))
         self.server_var = tk.StringVar(value='Server: warte')
         self.server_lbl = tk.Label(page, textvariable=self.server_var, font=self.font, bg=BG, fg=MUTED, anchor='w')
         self.server_lbl.pack(fill='x', padx=8)
@@ -335,6 +437,27 @@ class AgentWindow:
             self.printer_var.set(f'Drucker: {snap.last_printer or "—"}')
             self.error_var.set(snap.last_error or '—')
         self.root.after(1000, self._tick)
+
+    def _watch_poll(self) -> None:
+        seq = self.context.status.poll_seq()
+        if seq != self._seen_poll:
+            self._seen_poll = seq
+            if seq:
+                self._show_live()
+        self.root.after(POLL_WATCH_MS, self._watch_poll)
+
+    def _show_live(self) -> None:
+        self.live_lbl.configure(text='●')
+        self.live_lbl.place(relx=1.0, x=-4, y=6, anchor='ne')
+        self.live_lbl.lift()
+        self._blank.keep_cover_on_top()
+        if self._live_after is not None:
+            self.root.after_cancel(self._live_after)
+        self._live_after = self.root.after(LIVE_MS, self._hide_live)
+
+    def _hide_live(self) -> None:
+        self._live_after = None
+        self.live_lbl.place_forget()
 
     def _run_bg(self, work, done) -> None:
         def runner():
