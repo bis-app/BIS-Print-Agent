@@ -174,15 +174,13 @@ aktuellen Raspberry Pi OS steht dafuer in `/boot/firmware/config.txt`:
 dtoverlay=watterott-display,drm,rotate=180,swapxy
 ```
 
+Installation und Update auf dem Pi uebernimmt `install-pi.sh`. Es holt den
+Ordner `release` von GitHub, legt den Agenten nach `/opt/bis-print-agent`
+und richtet den Autostart ein. Schritte: [raspberry-pi.md](raspberry-pi.md).
+
 Autostart in der Desktop-Sitzung, nicht als systemd-Dienst (der Dienst
-oeffnet kein Fenster und sperrt das Fenster):
-
-```bash
-mkdir -p ~/.config/autostart
-cp /pfad/zu/print_agent_client/bis-print-agent.desktop ~/.config/autostart/
-```
-
-Die `.desktop`-Datei setzt `BIS_FULLSCREEN=1` selbst und startet
+oeffnet kein Fenster und sperrt das Fenster). Die `.desktop`-Datei setzt
+`BIS_FULLSCREEN=1` selbst und startet
 `bis-print-agent-start.sh`. Das Skript wartet auf Route und NTP, bevor
 das Fenster aufgeht. Netzwerk speichern geht ueber NetworkManager
 (`nmcli`). Der Desktop-Benutzer braucht dafuer

@@ -167,28 +167,26 @@ Sitzt das Bild auf HDMI statt auf dem TFT, HDMI abziehen und neu starten.
 
 ## 4. Agent installieren
 
-Die Dateien liegen im BIS-Repository unter `print_agent_client/`. Vom
-Windows-Rechner, im Ordner des Repositories:
+`install-pi.sh` holt den Ordner `release` von
+`https://github.com/bis-app/BIS-Print-Agent` (Branch `main`) und legt ihn
+nach `/opt/bis-print-agent`. Display-Overlay, udev-Regel und `raspi-config`
+fasst das Skript nicht an.
+
+Vom Windows-Rechner, im Ordner des Repositories:
 
 ```powershell
-scp -r print_agent_client pi@bis-druck.local:/home/pi/print_agent_client
+scp install-pi.sh pi@bis-druck.local:
 ```
 
-Auf dem Pi:
+Auf dem Pi, als der Benutzer, der sich am Desktop anmeldet:
 
 ```bash
-sudo mkdir -p /opt/bis-print-agent
-sudo cp /home/pi/print_agent_client/print_agent.py /opt/bis-print-agent/
-sudo cp /home/pi/print_agent_client/agent_*.py /opt/bis-print-agent/
-sudo cp /home/pi/print_agent_client/requirements.txt /opt/bis-print-agent/
-sudo cp /home/pi/print_agent_client/bis-print-agent-start.sh /opt/bis-print-agent/
-sudo cp /home/pi/print_agent_client/.env.example /opt/bis-print-agent/.env
-sudo chown -R pi:pi /opt/bis-print-agent
-chmod +x /opt/bis-print-agent/bis-print-agent-start.sh
-python3 -m venv /opt/bis-print-agent/venv
-/opt/bis-print-agent/venv/bin/pip install -r /opt/bis-print-agent/requirements.txt
+sudo bash install-pi.sh
 nano /opt/bis-print-agent/.env
 ```
+
+Derselbe Befehl aktualisiert eine bestehende Installation. `.env` und Token
+bleiben liegen.
 
 In der `.env` eintragen:
 
@@ -199,11 +197,14 @@ BIS_FULLSCREEN=1
 ```
 
 Die URL ohne Pfad am Ende. Der Token erscheint im BIS nur einmal
-(`Adminbereich -> Druck-Agents`). `chmod 600 /opt/bis-print-agent/.env`.
+(`Adminbereich -> Druck-Agents`). Das Skript setzt `chmod 600` auf die
+`.env`. Fehlt die Datei, entsteht sie aus `.env.example`.
 
 Den systemd-Dienst **nicht** einrichten. `bis-print-agent.service` startet
 den Agent ohne Fenster. Fenster und Dienst sperren sich gegenseitig; läuft
-der Dienst, pollt das Fenster nicht.
+der Dienst, pollt das Fenster nicht. Das Skript schaltet die Unit ab, falls
+sie schon eingerichtet ist. Läuft eine Desktop-Sitzung, startet es das
+Fenster. Sonst öffnet der Autostart es beim nächsten Login.
 
 ## 5. Erster Start
 
@@ -276,10 +277,8 @@ nötig. Dafür legt LAN das Profil `bis-lan` auf Ethernet und WLAN das Profil
 
 ## 6. Autostart
 
-```bash
-mkdir -p /home/pi/.config/autostart
-cp /home/pi/print_agent_client/bis-print-agent.desktop /home/pi/.config/autostart/
-```
+`install-pi.sh` kopiert `bis-print-agent.desktop` nach
+`~/.config/autostart/` des Desktop-Benutzers.
 
 Die Datei startet `/opt/bis-print-agent/bis-print-agent-start.sh` mit
 `BIS_FULLSCREEN=1`. Das Skript wartet bis zu 60 Sekunden auf eine
@@ -291,18 +290,17 @@ muss das Statusfenster ohne Anmeldung auf dem TFT liegen.
 
 ## 7. Aktualisieren
 
+Hat sich `install-pi.sh` im Repository geändert, die Datei wie in Abschnitt 4
+erneut auf den Pi kopieren. Danach:
+
 ```bash
-sudo cp /home/pi/print_agent_client/print_agent.py /opt/bis-print-agent/
-sudo cp /home/pi/print_agent_client/agent_*.py /opt/bis-print-agent/
-sudo cp /home/pi/print_agent_client/bis-print-agent-start.sh /opt/bis-print-agent/
-sudo chown pi:pi /opt/bis-print-agent/print_agent.py /opt/bis-print-agent/agent_*.py /opt/bis-print-agent/bis-print-agent-start.sh
-chmod +x /opt/bis-print-agent/bis-print-agent-start.sh
-cp /home/pi/print_agent_client/bis-print-agent.desktop /home/pi/.config/autostart/
-sudo reboot
+sudo bash install-pi.sh
 ```
 
-`.env` und Token bleiben liegen. Vor dem Kopieren die neuen Dateien wie in
-Abschnitt 4 auf den Pi legen.
+`.env` und Token bleiben liegen. Das Skript ersetzt den Code aus `release/`,
+zieht die Python-Abhängigkeiten nach und startet das Fenster neu, wenn eine
+Desktop-Sitzung läuft. Sonst öffnet der Autostart es nach einem Neustart
+(`sudo reboot`).
 
 ## Störungen
 
