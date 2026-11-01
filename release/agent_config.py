@@ -1,4 +1,4 @@
-"""Lesen und Schreiben der .env neben dem Druck-Agenten."""
+"""Lesen und Schreiben der Agent-Konfiguration (.env)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlparse
+
+# Auf dem Raspberry Pi liegt die Datei auf der Boot-Partition (FAT32), damit
+# sie unter Windows ohne Zusatztools editierbar ist.
+BOOT_ENV_CANDIDATES = (
+    Path('/boot/firmware/bis-print-agent.env'),
+    Path('/boot/bis-print-agent.env'),
+)
 
 
 @dataclass(frozen=True)
@@ -21,6 +28,18 @@ class AgentConfig:
     @property
     def ready(self) -> bool:
         return bool(self.base_url and self.token)
+
+
+def resolve_env_path(client_dir: Path) -> Path:
+    """Konfigurationsdatei: BIS_ENV_FILE, sonst Boot-Partition, sonst neben dem Skript."""
+    override = os.environ.get('BIS_ENV_FILE', '').strip()
+    if override:
+        return Path(override).expanduser()
+    if os.name != 'nt':
+        for candidate in BOOT_ENV_CANDIDATES:
+            if candidate.is_file():
+                return candidate
+    return client_dir / '.env'
 
 
 def parse_env_lines(text: str) -> dict[str, str]:

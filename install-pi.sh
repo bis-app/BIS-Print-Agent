@@ -1,13 +1,15 @@
 #!/bin/bash
 # Installiert oder aktualisiert den BIS Druck-Agenten auf einem Raspberry Pi.
 # Aufruf als Desktop-Benutzer: sudo bash install-pi.sh
-# Holt nur den Ordner release/ aus dem GitHub-Repo. .env und venv bleiben erhalten.
+# Holt nur den Ordner release/ aus dem GitHub-Repo. venv und Konfiguration auf
+# der Boot-Partition bleiben erhalten.
 
 set -euo pipefail
 
 REPO_TARBALL="https://github.com/bis-app/BIS-Print-Agent/archive/refs/heads/main.tar.gz"
 ARCHIVE_DIR="BIS-Print-Agent-main"
 PREFIX="/opt/bis-print-agent"
+BOOT_ENV="/boot/firmware/bis-print-agent.env"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Bitte mit sudo ausfuehren: sudo bash install-pi.sh" >&2
@@ -56,10 +58,14 @@ rsync -a --delete \
     --exclude .env \
     "$src/" "$PREFIX/"
 
-if [ ! -f "$PREFIX/.env" ]; then
-    cp "$PREFIX/.env.example" "$PREFIX/.env"
+if [ ! -f "$BOOT_ENV" ]; then
+    if [ -f "$PREFIX/.env" ]; then
+        cp "$PREFIX/.env" "$BOOT_ENV"
+        echo "Bestehende Konfiguration nach $BOOT_ENV kopiert."
+    else
+        cp "$PREFIX/.env.example" "$BOOT_ENV"
+    fi
 fi
-chmod 600 "$PREFIX/.env"
 chmod +x "$PREFIX/bis-print-agent-start.sh"
 chown -R "$APP_USER:" "$PREFIX"
 
@@ -101,8 +107,9 @@ else
     echo "Einmal neu starten: sudo reboot"
 fi
 
-if grep -q 'ersetze_mich_mit_dem_token_aus_dem_admin_ui' "$PREFIX/.env"; then
-    echo "URL und Token eintragen: nano $PREFIX/.env"
+if grep -q 'ersetze_mich_mit_dem_token_aus_dem_admin_ui' "$BOOT_ENV"; then
+    echo "URL und Token eintragen: nano $BOOT_ENV"
+    echo "(Datei liegt auf der Boot-Partition und ist unter Windows editierbar.)"
 fi
 
 echo "Fertig: $PREFIX"

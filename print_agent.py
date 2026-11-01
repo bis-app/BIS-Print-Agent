@@ -13,7 +13,9 @@ Start als Dienst ohne Fenster:
 
     python print_agent.py --service
 
-Konfiguration ueber Umgebungsvariablen oder .env neben diesem Skript:
+Konfiguration ueber Umgebungsvariablen oder eine .env-Datei (auf dem Pi
+typischerweise /boot/firmware/bis-print-agent.env, sonst neben diesem Skript;
+ueberschreibbar mit BIS_ENV_FILE):
 
     BIS_BASE_URL      z. B. https://bis.example.com
     BIS_AGENT_TOKEN   Bearer-Token (einmalig im Admin-UI angezeigt)
@@ -36,14 +38,14 @@ import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from agent_config import AgentConfig, load_config
+from agent_config import AgentConfig, load_config, resolve_env_path
 from agent_instance import InstanceLock
 from agent_loop import build_session, run_loop
 from agent_network import get_backend
 from agent_status import AgentStatus
 
 CLIENT_DIR = Path(__file__).resolve().parent
-ENV_PATH = CLIENT_DIR / '.env'
+ENV_PATH = resolve_env_path(CLIENT_DIR)
 
 
 def lock_path() -> Path:

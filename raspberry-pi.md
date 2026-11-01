@@ -182,13 +182,19 @@ Auf dem Pi, als der Benutzer, der sich am Desktop anmeldet:
 
 ```bash
 sudo bash install-pi.sh
-nano /opt/bis-print-agent/.env
+nano /boot/firmware/bis-print-agent.env
 ```
 
-Derselbe Befehl aktualisiert eine bestehende Installation. `.env` und Token
-bleiben liegen.
+Derselbe Befehl aktualisiert eine bestehende Installation. URL, Token und
+weitere Eintraege bleiben in der Konfigurationsdatei erhalten. Liegt noch
+eine alte `/opt/bis-print-agent/.env`, kopiert das Skript sie einmalig auf
+die Boot-Partition.
 
-In der `.env` eintragen:
+Die Konfiguration liegt auf der **Boot-Partition** (FAT32, unter Windows
+als Laufwerk „boot“ sichtbar). Dateiname: `bis-print-agent.env`. Fehlt die
+Datei, legt `install-pi.sh` sie aus `.env.example` an.
+
+In `bis-print-agent.env` eintragen:
 
 ```
 BIS_BASE_URL=https://bis.example.com
@@ -197,8 +203,9 @@ BIS_FULLSCREEN=1
 ```
 
 Die URL ohne Pfad am Ende. Der Token erscheint im BIS nur einmal
-(`Adminbereich -> Druck-Agents`). Das Skript setzt `chmod 600` auf die
-`.env`. Fehlt die Datei, entsteht sie aus `.env.example`.
+(`Adminbereich -> Druck-Agents`). Speichern aus den Einstellungen im
+Fenster schreibt in dieselbe Datei. Auf der Boot-Partition gelten keine
+Unix-Rechte wie `chmod 600`; die Karte physisch schuetzen.
 
 Den systemd-Dienst **nicht** einrichten. `bis-print-agent.service` startet
 den Agent ohne Fenster. Fenster und Dienst sperren sich gegenseitig; läuft
@@ -297,10 +304,10 @@ erneut auf den Pi kopieren. Danach:
 sudo bash install-pi.sh
 ```
 
-`.env` und Token bleiben liegen. Das Skript ersetzt den Code aus `release/`,
-zieht die Python-Abhängigkeiten nach und startet das Fenster neu, wenn eine
-Desktop-Sitzung läuft. Sonst öffnet der Autostart es nach einem Neustart
-(`sudo reboot`).
+`.env` und Token bleiben in `bis-print-agent.env` auf der Boot-Partition.
+Das Skript ersetzt den Code aus `release/`, zieht die Python-Abhängigkeiten
+nach und startet das Fenster neu, wenn eine Desktop-Sitzung läuft. Sonst
+öffnet der Autostart es nach einem Neustart (`sudo reboot`).
 
 ## Störungen
 
@@ -311,7 +318,7 @@ Desktop-Sitzung läuft. Sonst öffnet der Autostart es nach einem Neustart
 | Touch: oben trifft unten, links/rechts stimmt | `swapxy` lassen. Y-Matrix aus Abschnitt 3 (`1 0 0 0 -1 1`), `ATTRS` und `event*`. `xinput` wirkt hier nicht. Nach der Regel neu starten. |
 | `udevadm` zeigt keine `CALIBRATION` | Gerätenamen aus `N: Name` in die Regel übernehmen, neu starten. |
 | Fenster sagt, der Dienst laufe | `sudo systemctl disable --now bis-print-agent`, Sperrdatei `/tmp/bis-print-agent.lock` ist danach frei. |
-| `Token wurde abgelehnt (401)` | Token im BIS neu erzeugen, `.env` anpassen, Agent neu starten. |
+| `Token wurde abgelehnt (401)` | Token im BIS neu erzeugen, `bis-print-agent.env` anpassen, Agent neu starten. |
 | Direkt nach dem Einschalten „Server: nicht erreichbar“ | Der erste Poll lief vor Route oder Uhr. Die Zeile wechselt von selbst, sobald beides steht. Bleibt sie rot: `curl -I` gegen die BIS-URL und `timedatectl`. |
 | Herzschlag bleibt aus | `curl -I` gegen die BIS-URL, Uhr mit `timedatectl` prüfen. |
 | Auftrag bleibt auf `leased` | Agent war weg. Nach 60 Sekunden setzt der Server den Auftrag auf `pending`. |

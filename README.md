@@ -176,7 +176,9 @@ dtoverlay=watterott-display,drm,rotate=180,swapxy
 
 Installation und Update auf dem Pi uebernimmt `install-pi.sh`. Es holt den
 Ordner `release` von GitHub, legt den Agenten nach `/opt/bis-print-agent`
-und richtet den Autostart ein. Schritte: [raspberry-pi.md](raspberry-pi.md).
+und richtet den Autostart ein. URL und Token liegen auf dem Pi in
+`/boot/firmware/bis-print-agent.env` (Boot-Partition, unter Windows editierbar).
+Schritte: [raspberry-pi.md](raspberry-pi.md).
 
 Autostart in der Desktop-Sitzung, nicht als systemd-Dienst (der Dienst
 oeffnet kein Fenster und sperrt das Fenster). Die `.desktop`-Datei setzt
