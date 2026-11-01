@@ -6,6 +6,7 @@ import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
+from urllib.parse import urlparse
 
 from agent_config import AgentConfig, is_base_url, save_connection
 from agent_display import IdleBlank, set_display_power
@@ -191,26 +192,32 @@ class AgentWindow:
         page = self.status_page
         head = tk.Frame(page, bg=BG)
         head.pack(fill='x', padx=8, pady=(6, 2))
-        tk.Label(head, text='BIS Druck', font=self.font_b, bg=BG, fg=FG).pack(side='left')
+        self.title_var = tk.StringVar(value='—')
+        self.title_lbl = tk.Label(
+            head, textvariable=self.title_var, font=self.font_b, bg=BG, fg=FG, anchor='w',
+        )
+        self.title_lbl.pack(side='left', fill='x', expand=True)
         self.clock_var = tk.StringVar(value='--:--')
         tk.Label(
             head, textvariable=self.clock_var, font=self.font, bg=BG, fg=MUTED,
         ).pack(side='right', padx=(0, 14))
-        self.server_var = tk.StringVar(value='Server: warte')
-        self.server_lbl = tk.Label(page, textvariable=self.server_var, font=self.font, bg=BG, fg=MUTED, anchor='w')
-        self.server_lbl.pack(fill='x', padx=8)
         self.agent_var = tk.StringVar(value='Agent: —')
         self.job_var = tk.StringVar(value='Auftrag: —')
         self.printer_var = tk.StringVar(value='Drucker: —')
         self.error_var = tk.StringVar(value='—')
-        for var in (self.agent_var, self.job_var, self.printer_var):
+        for var in (self.agent_var, self.job_var):
             tk.Label(page, textvariable=var, font=self.font, bg=BG, fg=FG, anchor='w').pack(fill='x', padx=8)
         tk.Label(
             page, textvariable=self.error_var, font=self.font, bg=BG, fg=BAD,
             anchor='w', justify='left', wraplength=300,
         ).pack(fill='x', padx=8, pady=(2, 4))
+        bottom = tk.Frame(page, bg=BG)
+        bottom.pack(side='bottom', fill='x')
+        tk.Label(
+            bottom, textvariable=self.printer_var, font=self.font, bg=BG, fg=FG, anchor='w',
+        ).pack(fill='x', padx=8, pady=(0, 2))
         tk.Button(
-            page, text='Einstellungen', font=self.font_b, command=self.show_settings,
+            bottom, text='Einstellungen', font=self.font_b, command=self.show_settings,
             bg=ACCENT, fg='white', activebackground=ACCENT, activeforeground='white',
         ).pack(fill='x', padx=8, pady=6, ipady=4)
 
@@ -397,38 +404,44 @@ class AgentWindow:
         self.url_var.set(cfg.base_url)
         self.token_var.set('')
 
+    def _server_display_name(self) -> str:
+        url = (self.context.config.base_url or '').strip()
+        if not url:
+            return 'Nicht eingerichtet'
+        host = urlparse(url).netloc
+        return host or url
+
+    def _set_title(self, text: str, color: str) -> None:
+        self.title_var.set(text)
+        self.title_lbl.configure(fg=color)
+
     def _tick(self) -> None:
         self.clock_var.set(time.strftime('%H:%M'))
         if self.context.lock_state == 'busy':
-            self.server_var.set('Dienst läuft bereits')
-            self.server_lbl.configure(fg=BAD)
+            self._set_title('Dienst läuft bereits', BAD)
             self.agent_var.set('Bitte den Dienst beenden.')
             self.job_var.set('Auftrag: —')
             self.printer_var.set('Drucker: —')
             self.error_var.set('Es wird nicht ein zweites Mal gedruckt.')
         elif self.context.lock_state == 'error':
-            self.server_var.set('Sperre nicht möglich')
-            self.server_lbl.configure(fg=BAD)
+            self._set_title('Sperre nicht möglich', BAD)
             self.agent_var.set('Lock-Datei nicht beschreibbar.')
             self.job_var.set('Auftrag: —')
             self.printer_var.set('Drucker: —')
             self.error_var.set('Es wird nicht gedruckt.')
         else:
             snap = self.context.status.snapshot()
+            name = self._server_display_name()
             if not self.context.config.ready and snap.server_ok is None:
-                self.server_var.set('Server: nicht eingerichtet')
-                self.server_lbl.configure(fg=BAD)
+                self._set_title(name, BAD)
             elif snap.server_ok is True:
-                self.server_var.set('Server: verbunden')
-                self.server_lbl.configure(fg=OK)
+                self._set_title(name, OK)
             elif snap.server_ok is False:
-                self.server_var.set('Server: nicht erreichbar')
-                self.server_lbl.configure(fg=BAD)
+                self._set_title(name, BAD)
             else:
-                self.server_var.set('Server: warte')
-                self.server_lbl.configure(fg=MUTED)
-            name = snap.agent_name or '—'
-            self.agent_var.set(f'Agent: {name}')
+                self._set_title(name, MUTED)
+            agent_name = snap.agent_name or '—'
+            self.agent_var.set(f'Agent: {agent_name}')
             if snap.last_job_id is None:
                 self.job_var.set('Auftrag: —')
             else:
